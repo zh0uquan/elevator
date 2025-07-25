@@ -1,4 +1,5 @@
 pub mod event;
+mod scheduler;
 
 use crate::event::Event;
 use async_trait::async_trait;
