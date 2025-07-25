@@ -1,0 +1,10 @@
+[package]
+name = "elevator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.46.1", features = ["macros", "rt", "rt-multi-thread", "net", "sync"] }
+anyhow = "1.0.98"
+async-trait = "0.1.88"
+tower = { version = "0.5.2", features = ["full"] }
