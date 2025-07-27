@@ -32,7 +32,7 @@ impl TryFrom<&[u8]> for Event {
         let num_str = str::from_utf8(&value[1..]).context("argument is not valid UTF‑8")?;
         let arg = num_str
             .parse::<u8>()
-            .context(format!("failed to parse '{}' as u8", num_str))?;
+            .context(format!("failed to parse '{num_str}' as u8"))?;
 
         match cmd {
             b'U' => Ok(Event::ElevatorUp(arg)),
@@ -72,6 +72,7 @@ where
     fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
+
     fn call(&mut self, raw: &[u8]) -> Self::Future {
         let maybe_event = Event::try_from(raw);
         let inner = self.inner.clone();
@@ -80,7 +81,7 @@ where
             match maybe_event {
                 Ok(ev) => inner.lock().await.call(ev).await,
                 Err(e) => {
-                    eprintln!("Invalid packet: {:?}", e);
+                    eprintln!("Invalid packet: {e:?}");
                     Ok(())
                 }
             }

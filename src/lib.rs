@@ -1,11 +1,23 @@
 pub mod event;
-mod scheduler;
+pub mod scheduler;
+pub mod strategy;
 
 use crate::event::Event;
 use async_trait::async_trait;
 use std::fmt;
 use std::fmt::Display;
 use std::marker::PhantomData;
+
+#[async_trait]
+pub trait Strategy<Event, ScheduleEvent>: Send + Sync {
+    async fn handle(&self, event: Event);
+    async fn step(&self) -> Option<ScheduleEvent>;
+}
+
+#[derive(Debug)]
+pub enum ScheduleEvent {
+    Goto(u8),
+}
 
 pub enum Command {
     MU,
@@ -104,7 +116,7 @@ impl Transition for ElevatorController<Idle> {
     }
 }
 
-pub async fn my_event_handler(event: Event) -> Result<(), ()> {
-    println!("Handling event: {:?}", event);
+pub async fn my_event_handler(event: ScheduleEvent) -> Result<(), ()> {
+    println!("Handling event: {event:?}");
     Ok(())
 }
