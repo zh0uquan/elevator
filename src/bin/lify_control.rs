@@ -1,9 +1,11 @@
-use elevator::event::Event;
-use elevator::{Command, event, my_event_handler, scheduler, strategy};
+use elevator::strategy::SchedulerState;
+use elevator::transition::{ElevatorState, PreStart};
+use elevator::{Command, Event, controller, event, scheduler, strategy};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
 use tower::filter::Predicate;
-use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn};
+use tower::{BoxError, Service, ServiceBuilder, ServiceExt};
 
 const UDP_MAX_SIZE: usize = 65535;
 
@@ -24,14 +26,14 @@ impl Predicate<Event> for Validation {
 
     fn check(&mut self, event: Event) -> Result<Self::Request, BoxError> {
         let valid = match event {
-            event::Event::ElevatorUp(f)
-            | event::Event::ElevatorDown(f)
-            | event::Event::ElevatorApproaching(f)
-            | event::Event::DoorOpened(f)
-            | event::Event::DoorClosed(f)
-            | event::Event::ElevatorStopped(f)
-            | event::Event::PanelButtonPressed(f) => (MIN_FLOOR..=MAX_FLOOR).contains(&f),
-            event::Event::KeySwitched(k) => k <= MAX_KEY,
+            Event::ElevatorUp(f)
+            | Event::ElevatorDown(f)
+            | Event::ElevatorApproaching(f)
+            | Event::DoorOpened(f)
+            | Event::DoorClosed(f)
+            | Event::ElevatorStopped(f)
+            | Event::PanelButtonPressed(f) => (MIN_FLOOR..=MAX_FLOOR).contains(&f),
+            Event::KeySwitched(k) => k <= MAX_KEY,
         };
         if !valid {
             eprintln!("invalid event: {event:?}");
@@ -59,25 +61,30 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let mut buf = vec![0u8; UDP_MAX_SIZE];
-    let handler_svc = service_fn(my_event_handler);
-    // let prestart_controller = ElevatorController::new(tx);
-    // let mut controller = prestart_controller.init().await?;
-    // println!("Elevator controller initialized");
-    // let validation = Validation;
 
-    let scheduler_strategy = strategy::ScanStrategy::new(1, true);
+    let state = Arc::new(Mutex::new(SchedulerState {
+        current_floor: MIN_FLOOR,
+        direction_up: true,
+        ..SchedulerState::default()
+    }));
+    let prestart = ElevatorState::<PreStart>::new(state.clone(), tx);
+    let init = prestart.init().await?;
+    println!("Elevator controller initialized");
+    let scheduler_strategy = strategy::ScanStrategy::new(state.clone());
     let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
+    let controller_service = controller::ControllerService::new(Box::new(init));
+
     let mut svc = ServiceBuilder::new()
         .layer(event::UdpEventLayer)
         .layer(scheduler)
-        .service(handler_svc);
+        .service(controller_service);
 
     loop {
         let (len, addr) = shared_socket.recv_from(&mut buf).await?;
         println!("Got connected from {addr}");
 
         let raw = &buf[..len];
-        svc.ready().await.unwrap();
+        svc.ready().await?;
         if svc.call(raw).await.is_err() {
             eprintln!("Service error");
         }

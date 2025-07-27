@@ -1,5 +1,4 @@
-use crate::event::Event;
-use crate::{ScheduleEvent, Strategy};
+use crate::{Event, ScheduleEvent, Strategy};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -42,13 +41,13 @@ where
 
 impl<S, ST> Service<Event> for SchedulerService<S, ST>
 where
-    S: Service<ScheduleEvent, Response = (), Error = ()> + Send + 'static,
+    S: Service<ScheduleEvent, Response = (), Error = anyhow::Error> + Send + 'static,
     S::Future: Send + 'static,
     ST: Clone + Strategy<Event, ScheduleEvent> + Send + 'static,
 {
     type Response = ();
-    type Error = ();
-    type Future = Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
+    type Error = anyhow::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<(), Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -60,14 +59,15 @@ where
 
         Box::pin(async move {
             strategy.handle(event).await;
-            let maybe_sched_event = strategy.step().await;
-            match maybe_sched_event {
-                Some(ev) => inner.lock().await.call(ev).await,
-                None => {
-                    println!("No action generated");
-                    Ok(())
+            let maybe_sched_events = strategy.step().await;
+            if let Some(mut schedule_event) = maybe_sched_events {
+                while let Some(ev) = schedule_event.pop_front() {
+                    inner.lock().await.call(ev).await?;
                 }
+            } else {
+                println!("No action generated");
             }
+            Ok(())
         })
     }
 }
