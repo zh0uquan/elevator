@@ -1,4 +1,4 @@
-use crate::{Event, ScheduleEvent, Strategy};
+use crate::{Action, Event, ScheduleEvent, Strategy};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -41,7 +41,7 @@ where
 
 impl<S, ST> Service<Event> for SchedulerService<S, ST>
 where
-    S: Service<ScheduleEvent, Response = (), Error = anyhow::Error> + Send + 'static,
+    S: Service<Action, Response = (), Error = anyhow::Error> + Send + 'static,
     S::Future: Send + 'static,
     ST: Clone + Strategy<Event, ScheduleEvent> + Send + 'static,
 {
@@ -61,8 +61,16 @@ where
             strategy.handle(event).await;
             let maybe_sched_events = strategy.step().await;
             if let Some(mut schedule_event) = maybe_sched_events {
-                while let Some(ev) = schedule_event.pop_front() {
-                    inner.lock().await.call(ev).await?;
+                while let Some(event) = schedule_event.pop_front() {
+                    match event {
+                        ScheduleEvent::Instant(action) => {
+                            inner.lock().await.call(action).await?;
+                        }
+                        ScheduleEvent::WaitTime(duration, action) => {
+                            tokio::time::sleep(duration).await;
+                            inner.lock().await.call(action).await?;
+                        }
+                    }
                 }
             } else {
                 println!("No action generated");

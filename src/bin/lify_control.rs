@@ -47,18 +47,10 @@ impl Predicate<Event> for Validation {
 async fn main() -> anyhow::Result<()> {
     let socket = UdpSocket::bind(CONTROL_ADDRESS).await?;
     println!("Listening on {CONTROL_ADDRESS}");
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
 
     let shared_socket = Arc::new(socket);
     let shared_socket_clone = shared_socket.clone();
-    tokio::spawn(async move {
-        while let Some(cmd) = rx.recv().await {
-            shared_socket_clone
-                .send_to(cmd.to_string().as_bytes(), LIFTY_ADDRESS)
-                .await
-                .expect("failed to send command");
-        }
-    });
 
     let mut buf = vec![0u8; UDP_MAX_SIZE];
 
@@ -73,7 +65,9 @@ async fn main() -> anyhow::Result<()> {
     let scheduler_strategy = strategy::ScanStrategy::new(state.clone());
     let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
     let controller_service = controller::ControllerService::new(Box::new(init));
-
+    controller_service
+        .run_background(shared_socket_clone, rx, LIFTY_ADDRESS)
+        .await?;
     let mut svc = ServiceBuilder::new()
         .layer(event::UdpEventLayer)
         .layer(scheduler)
@@ -81,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         let (len, addr) = shared_socket.recv_from(&mut buf).await?;
-        println!("Got connected from {addr}");
+        println!("Got udp packet from {addr}");
 
         let raw = &buf[..len];
         svc.ready().await?;

@@ -5,14 +5,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::strategy::SchedulerState;
-use crate::{Command, ScheduleEvent};
+use crate::{Action, Command};
 
 pub type BoxedTransition = Box<dyn Transition + Sync + Send + 'static>;
 #[async_trait]
 pub trait Transition: Send + 'static + Sync + Debug {
     async fn on_event(
         self: Box<Self>,
-        event: ScheduleEvent,
+        action: Action,
     ) -> anyhow::Result<Box<dyn Transition + Sync + Send + 'static>>;
 }
 
@@ -52,9 +52,11 @@ pub struct MovingDown;
 #[derive(Debug)]
 pub struct DoorOpening;
 #[derive(Debug)]
-pub struct DoorOpen;
+pub struct DoorOpened;
 #[derive(Debug)]
 pub struct DoorClosing;
+#[derive(Debug)]
+pub struct DoorClosed;
 #[derive(Debug)]
 pub struct Braking;
 #[derive(Debug)]
@@ -95,13 +97,13 @@ impl ElevatorState<Idle> {
 
 #[async_trait]
 impl Transition for ElevatorState<Idle> {
-    async fn on_event(self: Box<Self>, event: ScheduleEvent) -> anyhow::Result<BoxedTransition> {
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
         let direction_up = {
             let state = self.state.lock().await;
             state.direction_up
         };
-        match event {
-            ScheduleEvent::Moving(v) => {
+        match action {
+            Action::Moving(v) => {
                 if direction_up {
                     println!("Moving up to floor {v}");
                     self.moving_up().await
@@ -110,18 +112,29 @@ impl Transition for ElevatorState<Idle> {
                     self.moving_down().await
                 }
             }
-            ScheduleEvent::OpeningDoor => self.opening_door().await,
-            ScheduleEvent::Braking => {
+            Action::OpeningDoor => {
+                println!("Opening door");
+                self.opening_door().await
+            }
+            Action::Braking => {
                 eprintln!("Can't Brake, already Stopped.");
                 Ok(self)
             }
-            ScheduleEvent::Stopped => {
+            Action::Stopped => {
                 eprintln!("Already Stopped.");
                 Ok(self)
             }
-            ScheduleEvent::DoorOpened => Ok(self),
-            ScheduleEvent::ClosingDoor => Ok(self),
-            ScheduleEvent::DoorClosed => Ok(self),
+            Action::DoorClosed => {
+                eprintln!("Door Already Closed");
+                Ok(self)
+            }
+            Action::DoorOpened | Action::ClosingDoor => {
+                eprintln!(
+                    "Strange door status: {:?}, state in {:?}",
+                    action, self._marker
+                );
+                Ok(self)
+            }
         }
     }
 }
@@ -148,14 +161,17 @@ impl ElevatorState<MovingDown> {
 
 #[async_trait]
 impl Transition for ElevatorState<MovingUp> {
-    async fn on_event(self: Box<Self>, event: ScheduleEvent) -> anyhow::Result<BoxedTransition> {
-        match event {
-            ScheduleEvent::Braking => {
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::Braking => {
                 println!("Braking.");
                 self.brake().await
             }
             ev => {
-                eprintln!("Ignored: invalid schedule event {ev:?}");
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
                 Ok(self)
             }
         }
@@ -164,16 +180,28 @@ impl Transition for ElevatorState<MovingUp> {
 
 #[async_trait]
 impl Transition for ElevatorState<MovingDown> {
-    async fn on_event(self: Box<Self>, event: ScheduleEvent) -> anyhow::Result<BoxedTransition> {
-        Ok(self)
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::Braking => {
+                println!("Braking.");
+                self.brake().await
+            }
+            ev => {
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
+                Ok(self)
+            }
+        }
     }
 }
 
 #[async_trait]
 impl Transition for ElevatorState<Braking> {
-    async fn on_event(self: Box<Self>, event: ScheduleEvent) -> anyhow::Result<BoxedTransition> {
-        match event {
-            ScheduleEvent::Stopped => {
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::Stopped => {
                 println!("Stopped.");
                 Ok(Box::new(ElevatorState::<Idle>::new(
                     Arc::clone(&self.state),
@@ -181,7 +209,10 @@ impl Transition for ElevatorState<Braking> {
                 )))
             }
             ev => {
-                eprintln!("Ignored: invalid schedule event {ev:?}");
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
                 Ok(self)
             }
         }
@@ -190,7 +221,75 @@ impl Transition for ElevatorState<Braking> {
 
 #[async_trait]
 impl Transition for ElevatorState<DoorOpening> {
-    async fn on_event(self: Box<Self>, event: ScheduleEvent) -> anyhow::Result<BoxedTransition> {
-        Ok(self)
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::DoorOpened => {
+                println!("Door Opened.");
+                Ok(Box::new(ElevatorState::<DoorOpened>::new(
+                    Arc::clone(&self.state),
+                    self.tx,
+                )))
+            }
+            Action::OpeningDoor => {
+                println!("Double Opening Door.");
+                Ok(self)
+            }
+            ev => {
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
+                Ok(self)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Transition for ElevatorState<DoorOpened> {
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::ClosingDoor => {
+                println!("Closing Door.");
+                self.send_command(Command::DC).await?;
+                Ok(Box::new(ElevatorState::<DoorClosing>::new(
+                    Arc::clone(&self.state),
+                    self.tx,
+                )))
+            }
+            ev => {
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
+                Ok(self)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Transition for ElevatorState<DoorClosing> {
+    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+        match action {
+            Action::DoorClosed => {
+                println!("Door Closed.");
+                Ok(Box::new(ElevatorState::<Idle>::new(
+                    Arc::clone(&self.state),
+                    self.tx,
+                )))
+            }
+            Action::ClosingDoor => {
+                println!("Double Closing Door.");
+                Ok(self)
+            }
+            ev => {
+                eprintln!(
+                    "Ignored: invalid schedule event {ev:?} in state {:?}",
+                    self._marker
+                );
+                Ok(self)
+            }
+        }
     }
 }

@@ -1,10 +1,10 @@
-use crate::Event;
+use crate::{Action, Event};
 use crate::{ScheduleEvent, Strategy};
+use async_trait::async_trait;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
 use std::sync::Arc;
-
-use async_trait::async_trait;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Default)]
@@ -63,20 +63,49 @@ impl Strategy<Event, ScheduleEvent> for ScanStrategy {
                 } else if floor < state.current_floor {
                     state.down_queue.push(floor);
                     state.status = Status::Moving;
+                } else {
+                    println!(
+                        "Floor already on {:?}, button pressed on {:?}",
+                        state.current_floor, floor
+                    );
                 }
             }
-            Event::DoorOpened(u8) => {}
-            Event::DoorClosed(u8) => {}
+            Event::DoorOpened(floor) => {
+                if let Some(target) = state.active_target {
+                    if target == floor {
+                        state.status = Status::DoorOpened;
+                    }
+                } else {
+                    eprintln!(
+                        "Door Opened on {floor}, target is {:?}",
+                        state.active_target
+                    );
+                }
+            }
+            Event::DoorClosed(floor) => {
+                if let Some(target) = state.active_target {
+                    if target == floor {
+                        state.status = Status::DoorClosed;
+                        state.active_target = None;
+                    }
+                } else {
+                    eprintln!(
+                        "Door Closed on {floor}, target is {:?}",
+                        state.active_target
+                    );
+                }
+            }
             Event::ElevatorApproaching(floor) => {
                 if let Some(target) = state.active_target {
                     if target == floor {
                         state.status = Status::Braking;
                     }
+                } else {
+                    println!(
+                        "Approaching to {floor}, target is {:?}",
+                        state.active_target
+                    );
                 }
-                println!(
-                    "Approaching to {floor}, target is {:?}",
-                    state.active_target
-                );
             }
             Event::ElevatorStopped(floor) => {
                 state.status = Status::Stopped;
@@ -94,13 +123,13 @@ impl Strategy<Event, ScheduleEvent> for ScanStrategy {
         let mut schedule_events = VecDeque::new();
         match state.status {
             Status::Braking => {
-                schedule_events.push_back(ScheduleEvent::Braking);
+                schedule_events.push_back(ScheduleEvent::Instant(Action::Braking));
             }
             Status::Stopped => {
-                schedule_events.push_back(ScheduleEvent::Stopped);
+                schedule_events.push_back(ScheduleEvent::Instant(Action::Stopped));
                 if let Some(target) = state.active_target {
                     if target == state.current_floor {
-                        schedule_events.push_back(ScheduleEvent::OpeningDoor);
+                        schedule_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
                     }
                 }
             }
@@ -111,21 +140,45 @@ impl Strategy<Event, ScheduleEvent> for ScanStrategy {
                 // Try the current direction
                 if let Some(floor) = Self::next(&mut state) {
                     state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Moving(floor));
+                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
                     return Some(schedule_events);
                 }
                 // Flip direction and try again
                 state.direction_up = !state.direction_up;
                 if let Some(floor) = Self::next(&mut state) {
                     state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Moving(floor));
+                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
                     return Some(schedule_events);
                 }
             }
-            Status::DoorOpening => {}
-            Status::DoorOpened => {}
-            Status::DoorClosed => {}
-            Status::DoorClosing => {}
+            Status::DoorOpening => {
+                schedule_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
+            }
+            Status::DoorOpened => {
+                schedule_events.push_back(ScheduleEvent::Instant(Action::DoorOpened));
+                schedule_events.push_back(ScheduleEvent::WaitTime(
+                    Duration::from_secs(2),
+                    Action::ClosingDoor,
+                ));
+            }
+            Status::DoorClosed => {
+                schedule_events.push_back(ScheduleEvent::Instant(Action::DoorClosed));
+                if let Some(floor) = Self::next(&mut state) {
+                    state.active_target = Some(floor);
+                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
+                    return Some(schedule_events);
+                }
+                // Flip direction and try again
+                state.direction_up = !state.direction_up;
+                if let Some(floor) = Self::next(&mut state) {
+                    state.active_target = Some(floor);
+                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
+                    return Some(schedule_events);
+                }
+            }
+            Status::DoorClosing => {
+                schedule_events.push_back(ScheduleEvent::Instant(Action::ClosingDoor));
+            }
         }
         if schedule_events.is_empty() {
             None

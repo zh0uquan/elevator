@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::fmt;
 use std::fmt::{Debug, Display};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub enum Event {
@@ -61,6 +62,12 @@ pub trait Strategy<Event, ScheduleEvent>: Send + Sync {
 
 #[derive(Debug)]
 pub enum ScheduleEvent {
+    Instant(Action),
+    WaitTime(Duration, Action),
+}
+
+#[derive(Debug)]
+pub enum Action {
     Moving(u8),
     Braking,
     Stopped,
