@@ -4,8 +4,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::strategy::SchedulerState;
-use crate::{Action, Command};
+use crate::strategies::scan::SchedulerState;
+use crate::types::cmd::Command;
+use crate::types::sched_events::Action;
 
 pub type BoxedTransition = Box<dyn Transition + Sync + Send + 'static>;
 #[async_trait]

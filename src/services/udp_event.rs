@@ -1,9 +1,10 @@
-use crate::Event;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
+
+use crate::types::event::Event;
 
 pub struct UdpEventService<S> {
     inner: Arc<Mutex<S>>,

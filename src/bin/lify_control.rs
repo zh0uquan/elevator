@@ -1,11 +1,14 @@
-use elevator::strategy::SchedulerState;
+use elevator::services::controller;
+use elevator::services::scheduler;
+use elevator::services::udp_event::UdpEventLayer;
+use elevator::strategies;
+use elevator::strategies::scan::SchedulerState;
 use elevator::transition::{ElevatorState, PreStart};
-use elevator::{Command, Event, controller, event, scheduler, strategy};
+use elevator::types::cmd::Command;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tower::filter::Predicate;
-use tower::{BoxError, Service, ServiceBuilder, ServiceExt};
+use tower::{Service, ServiceBuilder, ServiceExt};
 
 const UDP_MAX_SIZE: usize = 65535;
 
@@ -18,30 +21,30 @@ const MAX_FLOOR: u8 = 5;
 const MIN_KEY: u8 = 0;
 const MAX_KEY: u8 = 3;
 
-#[derive(Clone)]
-struct Validation;
-
-impl Predicate<Event> for Validation {
-    type Request = Event;
-
-    fn check(&mut self, event: Event) -> Result<Self::Request, BoxError> {
-        let valid = match event {
-            Event::ElevatorUp(f)
-            | Event::ElevatorDown(f)
-            | Event::ElevatorApproaching(f)
-            | Event::DoorOpened(f)
-            | Event::DoorClosed(f)
-            | Event::ElevatorStopped(f)
-            | Event::PanelButtonPressed(f) => (MIN_FLOOR..=MAX_FLOOR).contains(&f),
-            Event::KeySwitched(k) => k <= MAX_KEY,
-        };
-        if !valid {
-            eprintln!("invalid event: {event:?}");
-            return Err(BoxError::from("invalid event"));
-        }
-        Ok(event)
-    }
-}
+// #[derive(Clone)]
+// struct Validation;
+//
+// impl Predicate<Event> for Validation {
+//     type Request = Event;
+//
+//     fn check(&mut self, event: Event) -> Result<Self::Request, BoxError> {
+//         let valid = match event {
+//             Event::ElevatorUp(f)
+//             | Event::ElevatorDown(f)
+//             | Event::ElevatorApproaching(f)
+//             | Event::DoorOpened(f)
+//             | Event::DoorClosed(f)
+//             | Event::ElevatorStopped(f)
+//             | Event::PanelButtonPressed(f) => (MIN_FLOOR..=MAX_FLOOR).contains(&f),
+//             Event::KeySwitched(k) => k <= MAX_KEY,
+//         };
+//         if !valid {
+//             eprintln!("invalid event: {event:?}");
+//             return Err(BoxError::from("invalid event"));
+//         }
+//         Ok(event)
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -62,14 +65,14 @@ async fn main() -> anyhow::Result<()> {
     let prestart = ElevatorState::<PreStart>::new(state.clone(), tx);
     let init = prestart.init().await?;
     println!("Elevator controller initialized");
-    let scheduler_strategy = strategy::ScanStrategy::new(state.clone());
+    let scheduler_strategy = strategies::scan::ScanStrategy::new(state.clone());
     let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
     let controller_service = controller::ControllerService::new(Box::new(init));
     controller_service
         .run_background(shared_socket_clone, rx, LIFTY_ADDRESS)
         .await?;
     let mut svc = ServiceBuilder::new()
-        .layer(event::UdpEventLayer)
+        .layer(UdpEventLayer)
         .layer(scheduler)
         .service(controller_service);
 

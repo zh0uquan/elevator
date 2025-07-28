@@ -1,9 +1,12 @@
-use crate::{Action, Event, ScheduleEvent, Strategy};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::Mutex;
 use tower::{Layer, Service};
+
+use crate::strategy::Strategy;
+use crate::types::event::Event;
+use crate::types::sched_events::{Action, ScheduleEvent};
 
 pub struct SchedulerService<S, ST> {
     inner: Arc<Mutex<S>>,

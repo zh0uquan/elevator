@@ -1,5 +1,7 @@
 use crate::transition::BoxedTransition;
-use crate::{Action, Command};
+use crate::types::cmd::Command;
+use crate::types::sched_events::Action;
+
 use futures::ready;
 use std::pin::Pin;
 use std::sync::Arc;
