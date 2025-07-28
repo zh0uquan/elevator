@@ -1,5 +1,4 @@
-use crate::{Action, Event};
-use crate::{ScheduleEvent, Strategy};
+use crate::{Action, Event, ScheduleEvent, Strategy};
 use async_trait::async_trait;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -7,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, PartialOrd)]
 pub enum Status {
     #[default]
     Idle,
@@ -40,12 +39,28 @@ impl ScanStrategy {
         Self { state }
     }
 
-    fn next(state: &mut SchedulerState) -> Option<u8> {
+    fn add_to_queue(state: &mut SchedulerState, floor: u8) {
+        if floor > state.current_floor {
+            state.up_queue.push(Reverse(floor));
+        } else if floor < state.current_floor {
+            state.down_queue.push(floor);
+        }
+    }
+
+    fn next_floor(state: &mut SchedulerState) -> Option<u8> {
         if state.direction_up {
             state.up_queue.pop().map(|Reverse(f)| f)
         } else {
             state.down_queue.pop()
         }
+    }
+
+    fn try_next_floor(state: &mut SchedulerState) -> Option<u8> {
+        if let Some(floor) = Self::next_floor(state) {
+            return Some(floor);
+        }
+        state.direction_up = !state.direction_up;
+        Self::next_floor(state)
     }
 }
 
@@ -57,133 +72,107 @@ impl Strategy<Event, ScheduleEvent> for ScanStrategy {
             Event::PanelButtonPressed(floor)
             | Event::ElevatorUp(floor)
             | Event::ElevatorDown(floor) => {
-                if floor > state.current_floor {
-                    state.up_queue.push(Reverse(floor));
+                Self::add_to_queue(&mut state, floor);
+                if state.status == Status::Idle {
                     state.status = Status::Moving;
-                } else if floor < state.current_floor {
-                    state.down_queue.push(floor);
-                    state.status = Status::Moving;
-                } else {
-                    println!(
-                        "Floor already on {:?}, button pressed on {:?}",
-                        state.current_floor, floor
-                    );
                 }
             }
             Event::DoorOpened(floor) => {
-                if let Some(target) = state.active_target {
-                    if target == floor {
-                        state.status = Status::DoorOpened;
-                    }
+                if state.active_target == Some(floor) {
+                    state.status = Status::DoorOpened;
                 } else {
                     eprintln!(
-                        "Door Opened on {floor}, target is {:?}",
+                        "Unexpected door opened on floor {floor}, target: {:?}",
                         state.active_target
                     );
                 }
             }
             Event::DoorClosed(floor) => {
-                if let Some(target) = state.active_target {
-                    if target == floor {
-                        state.status = Status::DoorClosed;
-                        state.active_target = None;
-                    }
+                if state.active_target == Some(floor) {
+                    state.status = Status::DoorClosed;
+                    state.active_target = None;
                 } else {
                     eprintln!(
-                        "Door Closed on {floor}, target is {:?}",
+                        "Unexpected door closed on floor {floor}, target: {:?}",
                         state.active_target
                     );
                 }
             }
             Event::ElevatorApproaching(floor) => {
-                if let Some(target) = state.active_target {
-                    if target == floor {
-                        state.status = Status::Braking;
-                    }
+                if state.active_target == Some(floor) {
+                    state.status = Status::Braking;
                 } else {
-                    println!(
-                        "Approaching to {floor}, target is {:?}",
-                        state.active_target
-                    );
+                    println!("Approaching floor {floor}, no active target");
                 }
             }
             Event::ElevatorStopped(floor) => {
                 state.status = Status::Stopped;
                 state.current_floor = floor;
-                println!("Stopped to {floor}");
             }
             Event::KeySwitched(_) => {
-                println!("key switched");
+                println!("Key switched event received");
             }
         }
     }
 
     async fn step(&self) -> Option<VecDeque<ScheduleEvent>> {
         let mut state = self.state.lock().await;
-        let mut schedule_events = VecDeque::new();
+        let mut events = VecDeque::new();
+
         match state.status {
-            Status::Braking => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::Braking));
+            Status::Idle => {
+                if let Some(floor) = Self::try_next_floor(&mut state) {
+                    state.active_target = Some(floor);
+                    state.status = Status::Moving;
+                    events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
+                }
             }
-            Status::Stopped => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::Stopped));
-                if let Some(target) = state.active_target {
-                    if target == state.current_floor {
-                        schedule_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
+            Status::Moving => {
+                if state.active_target.is_none() {
+                    if let Some(floor) = Self::try_next_floor(&mut state) {
+                        state.active_target = Some(floor);
+                        events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
+                    } else {
+                        state.status = Status::Idle;
                     }
                 }
             }
-            Status::Moving | Status::Idle => {
-                if state.active_target.is_some() {
-                    return None;
-                }
-                // Try the current direction
-                if let Some(floor) = Self::next(&mut state) {
-                    state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
-                    return Some(schedule_events);
-                }
-                // Flip direction and try again
-                state.direction_up = !state.direction_up;
-                if let Some(floor) = Self::next(&mut state) {
-                    state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
-                    return Some(schedule_events);
+            Status::Braking => {
+                events.push_back(ScheduleEvent::Instant(Action::Braking));
+            }
+            Status::Stopped => {
+                events.push_back(ScheduleEvent::Instant(Action::Stopped));
+                if state.active_target == Some(state.current_floor) {
+                    events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
+                    state.status = Status::DoorOpening;
                 }
             }
             Status::DoorOpening => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
+                events.push_back(ScheduleEvent::Instant(Action::OpeningDoor));
             }
             Status::DoorOpened => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::DoorOpened));
-                schedule_events.push_back(ScheduleEvent::WaitTime(
+                events.push_back(ScheduleEvent::Instant(Action::DoorOpened));
+                events.push_back(ScheduleEvent::WaitTime(
                     Duration::from_secs(2),
                     Action::ClosingDoor,
                 ));
-            }
-            Status::DoorClosed => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::DoorClosed));
-                if let Some(floor) = Self::next(&mut state) {
-                    state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
-                    return Some(schedule_events);
-                }
-                // Flip direction and try again
-                state.direction_up = !state.direction_up;
-                if let Some(floor) = Self::next(&mut state) {
-                    state.active_target = Some(floor);
-                    schedule_events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
-                    return Some(schedule_events);
-                }
+                state.status = Status::DoorClosing;
             }
             Status::DoorClosing => {
-                schedule_events.push_back(ScheduleEvent::Instant(Action::ClosingDoor));
+                events.push_back(ScheduleEvent::Instant(Action::ClosingDoor));
+            }
+            Status::DoorClosed => {
+                events.push_back(ScheduleEvent::Instant(Action::DoorClosed));
+                if let Some(floor) = Self::try_next_floor(&mut state) {
+                    state.active_target = Some(floor);
+                    state.status = Status::Moving;
+                    events.push_back(ScheduleEvent::Instant(Action::Moving(floor)));
+                } else {
+                    state.status = Status::Idle;
+                }
             }
         }
-        if schedule_events.is_empty() {
-            None
-        } else {
-            Some(schedule_events)
-        }
+
+        (!events.is_empty()).then_some(events)
     }
 }
