@@ -1,3 +1,4 @@
+use anyhow::Result;
 use elevator::services::controller;
 use elevator::services::scheduler;
 use elevator::services::udp_event::UdpEventLayer;
@@ -11,79 +12,67 @@ use tokio::sync::Mutex;
 use tower::{Service, ServiceBuilder, ServiceExt};
 
 const UDP_MAX_SIZE: usize = 65535;
-
 const CONTROL_ADDRESS: &str = "127.0.0.1:11000";
 const LIFTY_ADDRESS: &str = "127.0.0.1:10000";
-
 const MIN_FLOOR: u8 = 1;
 const MAX_FLOOR: u8 = 5;
-
 const MIN_KEY: u8 = 0;
 const MAX_KEY: u8 = 3;
 
-// #[derive(Clone)]
-// struct Validation;
-//
-// impl Predicate<Event> for Validation {
-//     type Request = Event;
-//
-//     fn check(&mut self, event: Event) -> Result<Self::Request, BoxError> {
-//         let valid = match event {
-//             Event::ElevatorUp(f)
-//             | Event::ElevatorDown(f)
-//             | Event::ElevatorApproaching(f)
-//             | Event::DoorOpened(f)
-//             | Event::DoorClosed(f)
-//             | Event::ElevatorStopped(f)
-//             | Event::PanelButtonPressed(f) => (MIN_FLOOR..=MAX_FLOOR).contains(&f),
-//             Event::KeySwitched(k) => k <= MAX_KEY,
-//         };
-//         if !valid {
-//             eprintln!("invalid event: {event:?}");
-//             return Err(BoxError::from("invalid event"));
-//         }
-//         Ok(event)
-//     }
-// }
+pub struct ElevatorApp {
+    socket: Arc<UdpSocket>,
+}
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = UdpSocket::bind(CONTROL_ADDRESS).await?;
-    println!("Listening on {CONTROL_ADDRESS}");
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+impl ElevatorApp {
+    pub async fn new() -> Result<Self> {
+        let socket = Arc::new(UdpSocket::bind(CONTROL_ADDRESS).await?);
+        println!("Listening on {CONTROL_ADDRESS}");
+        Ok(Self { socket })
+    }
 
-    let shared_socket = Arc::new(socket);
-    let shared_socket_clone = shared_socket.clone();
+    pub async fn run(self) -> Result<()> {
+        // Initialize the channel and state
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+        let state = Arc::new(Mutex::new(SchedulerState {
+            current_floor: MIN_FLOOR,
+            direction_up: true,
+            ..SchedulerState::default()
+        }));
 
-    let mut buf = vec![0u8; UDP_MAX_SIZE];
+        let prestart = ElevatorState::<PreStart>::new(state.clone(), tx);
+        let init = prestart.init().await?;
+        println!("Elevator controller initialized");
 
-    let state = Arc::new(Mutex::new(SchedulerState {
-        current_floor: MIN_FLOOR,
-        direction_up: true,
-        ..SchedulerState::default()
-    }));
-    let prestart = ElevatorState::<PreStart>::new(state.clone(), tx);
-    let init = prestart.init().await?;
-    println!("Elevator controller initialized");
-    let scheduler_strategy = strategies::scan::ScanStrategy::new(state.clone());
-    let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
-    let controller_service = controller::ControllerService::new(Box::new(init));
-    controller_service
-        .run_background(shared_socket_clone, rx, LIFTY_ADDRESS)
-        .await?;
-    let mut svc = ServiceBuilder::new()
-        .layer(UdpEventLayer)
-        .layer(scheduler)
-        .service(controller_service);
+        let scheduler_strategy = strategies::scan::ScanStrategy::new(state.clone());
+        let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
+        let controller_service = controller::ControllerService::new(Box::new(init));
 
-    loop {
-        let (len, addr) = shared_socket.recv_from(&mut buf).await?;
-        println!("Got udp packet from {addr}");
+        let shared_socket = self.socket.clone();
+        controller_service
+            .run_background(shared_socket, rx, LIFTY_ADDRESS)
+            .await?;
 
-        let raw = &buf[..len];
-        svc.ready().await?;
-        if svc.call(raw).await.is_err() {
-            eprintln!("Service error");
+        let mut svc = ServiceBuilder::new()
+            .layer(UdpEventLayer)
+            .layer(scheduler)
+            .service(controller_service);
+
+        let mut buf = vec![0u8; UDP_MAX_SIZE];
+        loop {
+            let (len, addr) = self.socket.recv_from(&mut buf).await?;
+            println!("Got UDP packet from {}", addr);
+
+            let raw = &buf[..len];
+            svc.ready().await?;
+            if svc.call(raw).await.is_err() {
+                eprintln!("Service error");
+            }
         }
     }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let app = ElevatorApp::new().await?;
+    app.run().await
 }
