@@ -1,10 +1,9 @@
 use anyhow::Result;
-use elevator::services::controller;
-use elevator::services::scheduler;
+use elevator::services::controller::ControllerService;
+use elevator::services::scheduler::SchedulerEventLayer;
 use elevator::services::udp_event::UdpEventLayer;
-use elevator::strategies;
-use elevator::strategies::scan::SchedulerState;
-use elevator::transition::{ElevatorState, PreStart};
+use elevator::strategies::scan::{ScanStrategy, SchedulerState};
+use elevator::transition::{ElevatorState, IntoBoxedTransition, PreStart};
 use elevator::types::cmd::Command;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
@@ -43,9 +42,11 @@ impl ElevatorApp {
         let init = prestart.init().await?;
         println!("Elevator controller initialized");
 
-        let scheduler_strategy = strategies::scan::ScanStrategy::new(state.clone());
-        let scheduler = scheduler::SchedulerEventLayer::new(scheduler_strategy);
-        let controller_service = controller::ControllerService::new(Box::new(init));
+        let boxed = init.boxed();
+        let state_machine = Arc::new(Mutex::new(Some(boxed)));
+        let scheduler_strategy = ScanStrategy::new(state.clone());
+        let scheduler = SchedulerEventLayer::new(scheduler_strategy, state_machine.clone());
+        let controller_service = ControllerService::new(state_machine);
 
         let shared_socket = self.socket.clone();
         controller_service

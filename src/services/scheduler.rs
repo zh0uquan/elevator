@@ -5,30 +5,37 @@ use tokio::sync::Mutex;
 use tower::{Layer, Service};
 
 use crate::strategy::Strategy;
+use crate::transition::SharedStateMachine;
 use crate::types::event::Event;
 use crate::types::sched_events::{Action, ScheduleEvent};
 
 pub struct SchedulerService<S, ST> {
     inner: Arc<Mutex<S>>,
     strategy: ST,
+    state_machine: SharedStateMachine,
 }
 
 impl<S, ST> SchedulerService<S, ST> {
-    fn new(inner: S, strategy: ST) -> Self {
+    fn new(inner: S, strategy: ST, state_machine: SharedStateMachine) -> Self {
         SchedulerService {
             inner: Arc::new(Mutex::new(inner)),
             strategy,
+            state_machine,
         }
     }
 }
 
 pub struct SchedulerEventLayer<ST> {
     strategy: ST,
+    state_machine: SharedStateMachine,
 }
 
 impl<ST> SchedulerEventLayer<ST> {
-    pub fn new(strategy: ST) -> Self {
-        Self { strategy }
+    pub fn new(strategy: ST, state_machine: SharedStateMachine) -> Self {
+        Self {
+            strategy,
+            state_machine,
+        }
     }
 }
 
@@ -38,7 +45,7 @@ where
 {
     type Service = SchedulerService<S, ST>;
     fn layer(&self, inner: S) -> Self::Service {
-        SchedulerService::new(inner, self.strategy.clone())
+        SchedulerService::new(inner, self.strategy.clone(), self.state_machine.clone())
     }
 }
 
@@ -46,7 +53,7 @@ impl<S, ST> Service<Event> for SchedulerService<S, ST>
 where
     S: Service<Action, Response = (), Error = anyhow::Error> + Send + 'static,
     S::Future: Send + 'static,
-    ST: Clone + Strategy<Event, ScheduleEvent> + Send + 'static,
+    ST: Clone + Strategy<Event, ScheduleEvent, SharedStateMachine> + Send + 'static,
 {
     type Response = ();
     type Error = anyhow::Error;

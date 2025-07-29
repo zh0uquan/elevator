@@ -16,10 +16,10 @@ pub struct ControllerService {
 }
 
 impl ControllerService {
-    pub fn new(transition: BoxedTransition) -> Self {
+    pub fn new(transition: Arc<Mutex<Option<BoxedTransition>>>) -> Self {
         ControllerService {
             is_ready: Arc::new(Mutex::new(false)),
-            transition: Arc::new(Mutex::new(Some(transition))),
+            transition,
         }
     }
 

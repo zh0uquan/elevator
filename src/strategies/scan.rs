@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::strategy::Strategy;
+use crate::transition::SharedStateMachine;
 use crate::types::event::Event;
 use crate::types::sched_events::{Action, ScheduleEvent};
 
@@ -68,7 +69,7 @@ impl ScanStrategy {
 }
 
 #[async_trait]
-impl Strategy<Event, ScheduleEvent> for ScanStrategy {
+impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
     async fn handle(&self, event: Event) {
         let mut state = self.state.lock().await;
         match event {
@@ -177,5 +178,9 @@ impl Strategy<Event, ScheduleEvent> for ScanStrategy {
         }
 
         (!events.is_empty()).then_some(events)
+    }
+
+    async fn recommend(&self, state_machine: &SharedStateMachine) {
+        todo!()
     }
 }

@@ -8,6 +8,8 @@ use crate::strategies::scan::SchedulerState;
 use crate::types::cmd::Command;
 use crate::types::sched_events::Action;
 
+pub type SharedStateMachine = Arc<Mutex<Option<BoxedTransition>>>;
+
 pub type BoxedTransition = Box<dyn Transition + Sync + Send + 'static>;
 #[async_trait]
 pub trait Transition: Send + 'static + Sync + Debug {
@@ -15,6 +17,19 @@ pub trait Transition: Send + 'static + Sync + Debug {
         self: Box<Self>,
         action: Action,
     ) -> anyhow::Result<Box<dyn Transition + Sync + Send + 'static>>;
+}
+
+pub trait IntoBoxedTransition {
+    fn boxed(self) -> BoxedTransition;
+}
+
+impl<T> IntoBoxedTransition for T
+where
+    T: Transition + Send + Sync + 'static,
+{
+    fn boxed(self) -> BoxedTransition {
+        Box::new(self)
+    }
 }
 
 #[derive(Debug)]
