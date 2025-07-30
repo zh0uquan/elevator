@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::convert::TryFrom;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialOrd, PartialEq)]
 pub enum Event {
     ElevatorUp(u8),
     ElevatorDown(u8),

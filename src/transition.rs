@@ -16,6 +16,8 @@ pub trait Transition: Send + 'static + Sync + Debug {
         self: Box<Self>,
         action: Action,
     ) -> anyhow::Result<Box<dyn Transition + Sync + Send + 'static>>;
+
+    fn state(&self) -> State;
 }
 
 pub trait IntoBoxedTransition {
@@ -79,6 +81,17 @@ pub struct Braking;
 #[derive(Debug)]
 pub struct EmergencyBrake;
 
+#[derive(Debug, Clone, PartialOrd, PartialEq)]
+pub enum State {
+    Idle,
+    MovingUp,
+    MovingDown,
+    DoorOpened,
+    DoorClosing,
+    DoorOpening,
+    Braking,
+}
+
 impl ElevatorState<PreStart> {
     pub async fn init(self) -> anyhow::Result<ElevatorState<Idle>> {
         self.send_command(Command::R).await?;
@@ -97,7 +110,7 @@ impl Transition for ElevatorState<Idle> {
             }
             Action::MovingDown => {
                 println!("Moving down");
-                self.send_command(Command::MU).await?;
+                self.send_command(Command::MD).await?;
                 Ok(self.transit::<MovingDown>().boxed())
             }
             Action::OpeningDoor => {
@@ -126,6 +139,10 @@ impl Transition for ElevatorState<Idle> {
             }
         }
     }
+
+    fn state(&self) -> State {
+        State::Idle
+    }
 }
 
 #[async_trait]
@@ -145,6 +162,10 @@ impl Transition for ElevatorState<MovingUp> {
                 Ok(self)
             }
         }
+    }
+
+    fn state(&self) -> State {
+        State::MovingUp
     }
 }
 
@@ -166,6 +187,10 @@ impl Transition for ElevatorState<MovingDown> {
             }
         }
     }
+
+    fn state(&self) -> State {
+        State::MovingDown
+    }
 }
 
 #[async_trait]
@@ -184,6 +209,9 @@ impl Transition for ElevatorState<Braking> {
                 Ok(self)
             }
         }
+    }
+    fn state(&self) -> State {
+        State::Braking
     }
 }
 
@@ -208,6 +236,10 @@ impl Transition for ElevatorState<DoorOpening> {
             }
         }
     }
+
+    fn state(&self) -> State {
+        State::DoorOpening
+    }
 }
 
 #[async_trait]
@@ -227,6 +259,9 @@ impl Transition for ElevatorState<DoorOpened> {
                 Ok(self)
             }
         }
+    }
+    fn state(&self) -> State {
+        State::DoorOpened
     }
 }
 
@@ -250,5 +285,8 @@ impl Transition for ElevatorState<DoorClosing> {
                 Ok(self)
             }
         }
+    }
+    fn state(&self) -> State {
+        State::DoorClosing
     }
 }
