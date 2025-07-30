@@ -4,7 +4,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::strategies::scan::SchedulerState;
 use crate::types::cmd::Command;
 use crate::types::sched_events::Action;
 
@@ -34,7 +33,6 @@ where
 
 #[derive(Debug)]
 pub struct ElevatorState<State> {
-    state: Arc<Mutex<SchedulerState>>,
     tx: tokio::sync::mpsc::UnboundedSender<Command>,
     _marker: PhantomData<State>,
 }
@@ -45,13 +43,16 @@ impl<State> ElevatorState<State> {
         Ok(())
     }
 
-    pub fn new(
-        state: Arc<Mutex<SchedulerState>>,
-        tx: tokio::sync::mpsc::UnboundedSender<Command>,
-    ) -> ElevatorState<State> {
+    pub fn new(tx: tokio::sync::mpsc::UnboundedSender<Command>) -> ElevatorState<State> {
         ElevatorState::<State> {
-            state,
             tx,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn transit<NextState>(self) -> ElevatorState<NextState> {
+        ElevatorState::<NextState> {
+            tx: self.tx,
             _marker: PhantomData,
         }
     }
@@ -81,56 +82,28 @@ pub struct EmergencyBrake;
 impl ElevatorState<PreStart> {
     pub async fn init(self) -> anyhow::Result<ElevatorState<Idle>> {
         self.send_command(Command::R).await?;
-        Ok(ElevatorState::<Idle>::new(Arc::clone(&self.state), self.tx))
-    }
-}
-
-impl ElevatorState<Idle> {
-    async fn moving_up(self: Box<Self>) -> anyhow::Result<BoxedTransition> {
-        self.send_command(Command::MU).await?;
-        Ok(Box::new(ElevatorState::<MovingUp>::new(
-            Arc::clone(&self.state),
-            self.tx,
-        )))
-    }
-
-    async fn moving_down(self: Box<Self>) -> anyhow::Result<BoxedTransition> {
-        self.send_command(Command::MD).await?;
-        Ok(Box::new(ElevatorState::<MovingDown>::new(
-            Arc::clone(&self.state),
-            self.tx,
-        )))
-    }
-
-    async fn opening_door(self: Box<Self>) -> anyhow::Result<BoxedTransition> {
-        self.send_command(Command::DO).await?;
-        Ok(Box::new(ElevatorState::<DoorOpening>::new(
-            Arc::clone(&self.state),
-            self.tx,
-        )))
+        Ok(self.transit::<Idle>())
     }
 }
 
 #[async_trait]
 impl Transition for ElevatorState<Idle> {
     async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
-        let direction_up = {
-            let state = self.state.lock().await;
-            state.direction_up
-        };
         match action {
-            Action::Moving(v) => {
-                if direction_up {
-                    println!("Moving up to floor {v}");
-                    self.moving_up().await
-                } else {
-                    println!("Moving down to floor {v}");
-                    self.moving_down().await
-                }
+            Action::MovingUp => {
+                println!("Moving up");
+                self.send_command(Command::MU).await?;
+                Ok(self.transit::<MovingUp>().boxed())
+            }
+            Action::MovingDown => {
+                println!("Moving down");
+                self.send_command(Command::MU).await?;
+                Ok(self.transit::<MovingDown>().boxed())
             }
             Action::OpeningDoor => {
                 println!("Opening door");
-                self.opening_door().await
+                self.send_command(Command::DO).await?;
+                Ok(self.transit::<DoorOpening>().boxed())
             }
             Action::Braking => {
                 eprintln!("Can't Brake, already Stopped.");
@@ -155,33 +128,14 @@ impl Transition for ElevatorState<Idle> {
     }
 }
 
-impl ElevatorState<MovingUp> {
-    async fn brake(self: Box<Self>) -> anyhow::Result<BoxedTransition> {
-        self.send_command(Command::S).await?;
-        Ok(Box::new(ElevatorState::<Braking>::new(
-            Arc::clone(&self.state),
-            self.tx,
-        )))
-    }
-}
-
-impl ElevatorState<MovingDown> {
-    async fn brake(self: Box<Self>) -> anyhow::Result<BoxedTransition> {
-        self.send_command(Command::S).await?;
-        Ok(Box::new(ElevatorState::<Braking>::new(
-            Arc::clone(&self.state),
-            self.tx,
-        )))
-    }
-}
-
 #[async_trait]
 impl Transition for ElevatorState<MovingUp> {
     async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Braking => {
                 println!("Braking.");
-                self.brake().await
+                self.send_command(Command::S).await?;
+                Ok(self.transit::<Braking>().boxed())
             }
             ev => {
                 eprintln!(
@@ -200,7 +154,8 @@ impl Transition for ElevatorState<MovingDown> {
         match action {
             Action::Braking => {
                 println!("Braking.");
-                self.brake().await
+                self.send_command(Command::S).await?;
+                Ok(self.transit::<Braking>().boxed())
             }
             ev => {
                 eprintln!(
@@ -219,10 +174,7 @@ impl Transition for ElevatorState<Braking> {
         match action {
             Action::Stopped => {
                 println!("Stopped.");
-                Ok(Box::new(ElevatorState::<Idle>::new(
-                    Arc::clone(&self.state),
-                    self.tx,
-                )))
+                Ok(self.transit::<Idle>().boxed())
             }
             ev => {
                 eprintln!(
@@ -241,10 +193,7 @@ impl Transition for ElevatorState<DoorOpening> {
         match action {
             Action::DoorOpened => {
                 println!("Door Opened.");
-                Ok(Box::new(ElevatorState::<DoorOpened>::new(
-                    Arc::clone(&self.state),
-                    self.tx,
-                )))
+                Ok(self.transit::<DoorOpened>().boxed())
             }
             Action::OpeningDoor => {
                 println!("Double Opening Door.");
@@ -268,10 +217,7 @@ impl Transition for ElevatorState<DoorOpened> {
             Action::ClosingDoor => {
                 println!("Closing Door.");
                 self.send_command(Command::DC).await?;
-                Ok(Box::new(ElevatorState::<DoorClosing>::new(
-                    Arc::clone(&self.state),
-                    self.tx,
-                )))
+                Ok(self.transit::<DoorClosing>().boxed())
             }
             ev => {
                 eprintln!(
@@ -290,10 +236,7 @@ impl Transition for ElevatorState<DoorClosing> {
         match action {
             Action::DoorClosed => {
                 println!("Door Closed.");
-                Ok(Box::new(ElevatorState::<Idle>::new(
-                    Arc::clone(&self.state),
-                    self.tx,
-                )))
+                Ok(self.transit::<Idle>().boxed())
             }
             Action::ClosingDoor => {
                 println!("Double Closing Door.");

@@ -66,10 +66,10 @@ where
     fn call(&mut self, event: Event) -> Self::Future {
         let inner = self.inner.clone();
         let strategy = self.strategy.clone();
+        let sm = self.state_machine.clone();
 
         Box::pin(async move {
-            strategy.handle(event).await;
-            let maybe_sched_events = strategy.step().await;
+            let maybe_sched_events = strategy.handle(event, &sm).await;
             if let Some(mut schedule_event) = maybe_sched_events {
                 while let Some(event) = schedule_event.pop_front() {
                     match event {

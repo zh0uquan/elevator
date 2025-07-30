@@ -1,8 +1,9 @@
 use anyhow::Result;
+use elevator::elevator::ElevatorData;
 use elevator::services::controller::ControllerService;
 use elevator::services::scheduler::SchedulerEventLayer;
 use elevator::services::udp_event::UdpEventLayer;
-use elevator::strategies::scan::{ScanStrategy, SchedulerState};
+use elevator::strategies::scan::ScanStrategy;
 use elevator::transition::{ElevatorState, IntoBoxedTransition, PreStart};
 use elevator::types::cmd::Command;
 use std::sync::Arc;
@@ -32,19 +33,19 @@ impl ElevatorApp {
     pub async fn run(self) -> Result<()> {
         // Initialize the channel and state
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
-        let state = Arc::new(Mutex::new(SchedulerState {
+        let elevator_data = Arc::new(Mutex::new(ElevatorData {
             current_floor: MIN_FLOOR,
             direction_up: true,
-            ..SchedulerState::default()
+            ..Default::default()
         }));
 
-        let prestart = ElevatorState::<PreStart>::new(state.clone(), tx);
+        let prestart = ElevatorState::<PreStart>::new(tx);
         let init = prestart.init().await?;
         println!("Elevator controller initialized");
 
         let boxed = init.boxed();
         let state_machine = Arc::new(Mutex::new(Some(boxed)));
-        let scheduler_strategy = ScanStrategy::new(state.clone());
+        let scheduler_strategy = ScanStrategy::new(elevator_data.clone());
         let scheduler = SchedulerEventLayer::new(scheduler_strategy, state_machine.clone());
         let controller_service = ControllerService::new(state_machine);
 

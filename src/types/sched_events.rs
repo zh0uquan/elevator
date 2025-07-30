@@ -8,7 +8,8 @@ pub enum ScheduleEvent {
 
 #[derive(Debug)]
 pub enum Action {
-    Moving(u8),
+    MovingUp,
+    MovingDown,
     Braking,
     Stopped,
     OpeningDoor,
