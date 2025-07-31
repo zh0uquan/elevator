@@ -1,4 +1,4 @@
-use crate::context::ElevatorContext;
+use crate::context::{ElevatorContext, Location};
 use crate::strategy::Strategy;
 use crate::transition::{SharedStateMachine, State};
 use crate::types::event::Event;
@@ -62,7 +62,6 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
                 }
             }
             Event::ElevatorStopped(floor) => {
-                sched_events.push_back(ScheduleEvent::Instant(Action::Stopped));
                 if elevator_context.active_target == Some(floor) && state == State::Braking {
                     sched_events.push_back(ScheduleEvent::Instant(Action::Stopped));
                     sched_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor))
@@ -73,6 +72,7 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
                 }
             }
             Event::ElevatorApproaching(floor) => {
+                elevator_context.approach_floor(floor);
                 if elevator_context.active_target == Some(floor)
                     && (state == State::MovingUp || state == State::MovingDown)
                 {
@@ -86,17 +86,17 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
 
         println!("{:?} with state {:?}", elevator_context, state);
 
-        // if state == State::Idle || matches!(event, Event::DoorClosed(_)) {
-        //     if let Some(target) = elevator_context.next_target() {
-        //         if target > elevator_context.current_location {
-        //             sched_events.push_back(ScheduleEvent::Instant(Action::MovingUp));
-        //         } else if target < elevator_context.current_location {
-        //             sched_events.push_back(ScheduleEvent::Instant(Action::MovingDown));
-        //         } else {
-        //             println!("elevator already on floor {target}");
-        //         }
-        //     }
-        // }
+        if state == State::Idle || matches!(event, Event::DoorClosed(_)) {
+            if let Some(target) = elevator_context.next_target() {
+                if Location::AtFloor(target) > elevator_context.current_location {
+                    sched_events.push_back(ScheduleEvent::Instant(Action::MovingUp));
+                } else if Location::AtFloor(target) < elevator_context.current_location {
+                    sched_events.push_back(ScheduleEvent::Instant(Action::MovingDown));
+                } else {
+                    println!("elevator already on floor {target}");
+                }
+            }
+        }
 
         (!sched_events.is_empty()).then_some(sched_events)
     }

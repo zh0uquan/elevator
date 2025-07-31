@@ -33,8 +33,10 @@ impl ElevatorApp {
     pub async fn run(self) -> Result<()> {
         // Initialize the channel and state
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
-        let elevator_data = Arc::new(Mutex::new(ElevatorContext {
+        let elevator_context = Arc::new(Mutex::new(ElevatorContext {
             current_location: Location::AtFloor(MIN_FLOOR),
+            min_floor: MIN_FLOOR,
+            max_floor: MAX_FLOOR,
             direction_up: true,
             ..Default::default()
         }));
@@ -45,9 +47,9 @@ impl ElevatorApp {
 
         let boxed = init.boxed();
         let state_machine = Arc::new(Mutex::new(Some(boxed)));
-        let scheduler_strategy = ScanStrategy::new(elevator_data.clone());
+        let scheduler_strategy = ScanStrategy::new(elevator_context.clone());
         let scheduler = SchedulerEventLayer::new(scheduler_strategy, state_machine.clone());
-        let controller_service = ControllerService::new(state_machine);
+        let controller_service = ControllerService::new(state_machine, elevator_context);
 
         let shared_socket = self.socket.clone();
         controller_service
@@ -62,7 +64,7 @@ impl ElevatorApp {
         let mut buf = vec![0u8; UDP_MAX_SIZE];
         loop {
             let (len, addr) = self.socket.recv_from(&mut buf).await?;
-            println!("Got UDP packet from {}", addr);
+            println!("Got UDP packet from {addr}");
 
             let raw = &buf[..len];
             svc.ready().await?;

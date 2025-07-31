@@ -1,21 +1,25 @@
+use crate::context::ElevatorContext;
+use crate::types::cmd::Command;
+use crate::types::sched_events::Action;
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::types::cmd::Command;
-use crate::types::sched_events::Action;
-
 pub type SharedStateMachine = Arc<Mutex<Option<BoxedTransition>>>;
 
-pub type BoxedTransition = Box<dyn Transition + Sync + Send + 'static>;
+pub type BoxedTransition = Box<dyn Transition<ElevatorContext> + Sync + Send + 'static>;
 #[async_trait]
-pub trait Transition: Send + 'static + Sync + Debug {
+pub trait Transition<C>: Send + 'static + Sync + Debug
+where
+    C: Debug + Send + Sync + 'static,
+{
     async fn on_event(
         self: Box<Self>,
         action: Action,
-    ) -> anyhow::Result<Box<dyn Transition + Sync + Send + 'static>>;
+        ctx: &mut C,
+    ) -> anyhow::Result<Box<dyn Transition<C> + Sync + Send + 'static>>;
 
     fn state(&self) -> State;
 }
@@ -26,7 +30,7 @@ pub trait IntoBoxedTransition {
 
 impl<T> IntoBoxedTransition for T
 where
-    T: Transition + Send + Sync + 'static,
+    T: Transition<ElevatorContext> + Send + Sync + 'static,
 {
     fn boxed(self) -> BoxedTransition {
         Box::new(self)
@@ -100,17 +104,23 @@ impl ElevatorState<PreStart> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<Idle> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<Idle> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::MovingUp => {
                 println!("Moving up");
                 self.send_command(Command::MU).await?;
+                ctx.transit_floor();
                 Ok(self.transit::<MovingUp>().boxed())
             }
             Action::MovingDown => {
                 println!("Moving down");
                 self.send_command(Command::MD).await?;
+                ctx.transit_floor();
                 Ok(self.transit::<MovingDown>().boxed())
             }
             Action::OpeningDoor => {
@@ -146,8 +156,12 @@ impl Transition for ElevatorState<Idle> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<MovingUp> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<MovingUp> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Braking => {
                 println!("Braking.");
@@ -170,8 +184,12 @@ impl Transition for ElevatorState<MovingUp> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<MovingDown> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<MovingDown> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Braking => {
                 println!("Braking.");
@@ -194,11 +212,16 @@ impl Transition for ElevatorState<MovingDown> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<Braking> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<Braking> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Stopped => {
                 println!("Stopped.");
+                ctx.transit_floor();
                 Ok(self.transit::<Idle>().boxed())
             }
             ev => {
@@ -216,8 +239,12 @@ impl Transition for ElevatorState<Braking> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<DoorOpening> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<DoorOpening> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::DoorOpened => {
                 println!("Door Opened.");
@@ -243,8 +270,12 @@ impl Transition for ElevatorState<DoorOpening> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<DoorOpened> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<DoorOpened> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::ClosingDoor => {
                 println!("Closing Door.");
@@ -266,8 +297,12 @@ impl Transition for ElevatorState<DoorOpened> {
 }
 
 #[async_trait]
-impl Transition for ElevatorState<DoorClosing> {
-    async fn on_event(self: Box<Self>, action: Action) -> anyhow::Result<BoxedTransition> {
+impl Transition<ElevatorContext> for ElevatorState<DoorClosing> {
+    async fn on_event(
+        self: Box<Self>,
+        action: Action,
+        ctx: &mut ElevatorContext,
+    ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::DoorClosed => {
                 println!("Door Closed.");

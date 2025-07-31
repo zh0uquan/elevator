@@ -2,6 +2,7 @@ use crate::transition::BoxedTransition;
 use crate::types::cmd::Command;
 use crate::types::sched_events::Action;
 
+use crate::context::ElevatorContext;
 use futures::ready;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,13 +14,18 @@ use tower::Service;
 pub struct ControllerService {
     is_ready: Arc<Mutex<bool>>,
     transition: Arc<Mutex<Option<BoxedTransition>>>,
+    elevator_context: Arc<Mutex<ElevatorContext>>,
 }
 
 impl ControllerService {
-    pub fn new(transition: Arc<Mutex<Option<BoxedTransition>>>) -> Self {
+    pub fn new(
+        transition: Arc<Mutex<Option<BoxedTransition>>>,
+        elevator_context: Arc<Mutex<ElevatorContext>>,
+    ) -> Self {
         ControllerService {
             is_ready: Arc::new(Mutex::new(false)),
             transition,
+            elevator_context,
         }
     }
 
@@ -58,12 +64,14 @@ impl Service<Action> for ControllerService {
 
     fn call(&mut self, action: Action) -> Self::Future {
         let transition = Arc::clone(&self.transition);
+        let elevator_context = Arc::clone(&self.elevator_context);
         Box::pin(async move {
             let mut guard = transition.lock().await;
             let current = guard
                 .take()
                 .ok_or_else(|| anyhow::anyhow!("Transition was None"))?;
-            let next = current.on_event(action).await?;
+            let mut ctx = elevator_context.lock().await;
+            let next = current.on_event(action, &mut ctx).await?;
             *guard = Some(next);
             Ok(())
         })

@@ -42,21 +42,53 @@ pub struct ElevatorContext {
     pub up_queue: BinaryHeap<Reverse<u8>>,
     pub down_queue: BinaryHeap<u8>,
     pub active_target: Option<u8>,
+    pub min_floor: u8,
+    pub max_floor: u8,
 }
 
 #[derive(Debug, Clone)]
 pub struct ScanStrategy {}
 
 impl ElevatorContext {
-    pub fn move_to(&mut self, location: Location) {
-        self.current_location = location;
+    pub fn transit_floor(&mut self) {
+        self.current_location = match (&self.current_location, self.direction_up) {
+            (&Location::AtFloor(f), true) => Location::BetweenFloors(f, f + 1),
+            (&Location::AtFloor(f), false) => Location::BetweenFloors(f - 1, f),
+            (&Location::BetweenFloors(_l, h), true) => Location::AtFloor(h),
+            (&Location::BetweenFloors(l, _h), false) => Location::AtFloor(l),
+        };
+
+        if let Location::AtFloor(f) = &self.current_location {
+            if f == &self.min_floor {
+                self.direction_up = true;
+            }
+            if f == &self.max_floor {
+                self.direction_up = false;
+            }
+        }
+    }
+
+    pub fn approach_floor(&mut self, floor: u8) {
+        if self.direction_up {
+            self.current_location = Location::BetweenFloors(floor - 1, floor);
+        } else {
+            self.current_location = Location::BetweenFloors(floor, floor + 1);
+        }
     }
 
     pub fn enqueue_request(&mut self, floor: u8) {
-        if Location::AtFloor(floor) > self.current_location {
-            self.up_queue.push(Reverse(floor));
-        } else if Location::AtFloor(floor) < self.current_location {
-            self.down_queue.push(floor);
+        let request_location = Location::AtFloor(floor);
+
+        if request_location > self.current_location {
+            if !self.up_queue.iter().any(|&Reverse(f)| f == floor) {
+                self.up_queue.push(Reverse(floor));
+            }
+        } else if request_location < self.current_location {
+            if !self.down_queue.iter().any(|&f| f == floor) {
+                self.down_queue.push(floor);
+            }
+        } else {
+            println!("Request is on current floor, no queueing needed.");
         }
     }
 
