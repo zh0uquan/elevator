@@ -1,5 +1,5 @@
 use anyhow::Result;
-use elevator::elevator::ElevatorData;
+use elevator::context::{ElevatorContext, Location};
 use elevator::services::controller::ControllerService;
 use elevator::services::scheduler::SchedulerEventLayer;
 use elevator::services::udp_event::UdpEventLayer;
@@ -33,8 +33,8 @@ impl ElevatorApp {
     pub async fn run(self) -> Result<()> {
         // Initialize the channel and state
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
-        let elevator_data = Arc::new(Mutex::new(ElevatorData {
-            current_floor: MIN_FLOOR,
+        let elevator_data = Arc::new(Mutex::new(ElevatorContext {
+            current_location: Location::AtFloor(MIN_FLOOR),
             direction_up: true,
             ..Default::default()
         }));

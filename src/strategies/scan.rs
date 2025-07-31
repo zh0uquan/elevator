@@ -1,4 +1,4 @@
-use crate::elevator::ElevatorData;
+use crate::context::ElevatorContext;
 use crate::strategy::Strategy;
 use crate::transition::{SharedStateMachine, State};
 use crate::types::event::Event;
@@ -11,12 +11,14 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct ScanStrategy {
-    elevator_data: Arc<Mutex<ElevatorData>>,
+    elevator_context: Arc<Mutex<ElevatorContext>>,
 }
 
 impl ScanStrategy {
-    pub fn new(elevator_data: Arc<Mutex<ElevatorData>>) -> Self {
-        Self { elevator_data }
+    pub fn new(elevator_data: Arc<Mutex<ElevatorContext>>) -> Self {
+        Self {
+            elevator_context: elevator_data,
+        }
     }
 }
 
@@ -27,7 +29,7 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
         event: Event,
         state_machine: &SharedStateMachine,
     ) -> Option<VecDeque<ScheduleEvent>> {
-        let mut elevator_data = self.elevator_data.lock().await;
+        let mut elevator_context = self.elevator_context.lock().await;
         let state = state_machine
             .lock()
             .await
@@ -39,10 +41,10 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
             Event::PanelButtonPressed(floor)
             | Event::ElevatorUp(floor)
             | Event::ElevatorDown(floor) => {
-                elevator_data.enqueue_request(floor);
+                elevator_context.enqueue_request(floor);
             }
             Event::DoorOpened(floor) => {
-                if elevator_data.active_target == Some(floor) && state == State::DoorOpening {
+                if elevator_context.active_target == Some(floor) && state == State::DoorOpening {
                     sched_events.push_back(ScheduleEvent::Instant(Action::DoorOpened));
                     sched_events.push_back(ScheduleEvent::WaitTime(
                         Duration::from_secs(2),
@@ -61,8 +63,7 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
             }
             Event::ElevatorStopped(floor) => {
                 sched_events.push_back(ScheduleEvent::Instant(Action::Stopped));
-                if elevator_data.active_target == Some(floor) && state == State::Braking {
-                    elevator_data.current_floor = floor;
+                if elevator_context.active_target == Some(floor) && state == State::Braking {
                     sched_events.push_back(ScheduleEvent::Instant(Action::Stopped));
                     sched_events.push_back(ScheduleEvent::Instant(Action::OpeningDoor))
                 } else {
@@ -72,7 +73,7 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
                 }
             }
             Event::ElevatorApproaching(floor) => {
-                if elevator_data.active_target == Some(floor)
+                if elevator_context.active_target == Some(floor)
                     && (state == State::MovingUp || state == State::MovingDown)
                 {
                     sched_events.push_back(ScheduleEvent::Instant(Action::Braking))
@@ -83,19 +84,19 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
             Event::KeySwitched(floor) => {}
         }
 
-        println!("{:?} with state {:?}", elevator_data, state);
+        println!("{:?} with state {:?}", elevator_context, state);
 
-        if state == State::Idle || matches!(event, Event::DoorClosed(_)) {
-            if let Some(target) = elevator_data.next_target() {
-                if target > elevator_data.current_floor {
-                    sched_events.push_back(ScheduleEvent::Instant(Action::MovingUp));
-                } else if target < elevator_data.current_floor {
-                    sched_events.push_back(ScheduleEvent::Instant(Action::MovingDown));
-                } else {
-                    println!("elevator already on floor {target}");
-                }
-            }
-        }
+        // if state == State::Idle || matches!(event, Event::DoorClosed(_)) {
+        //     if let Some(target) = elevator_context.next_target() {
+        //         if target > elevator_context.current_location {
+        //             sched_events.push_back(ScheduleEvent::Instant(Action::MovingUp));
+        //         } else if target < elevator_context.current_location {
+        //             sched_events.push_back(ScheduleEvent::Instant(Action::MovingDown));
+        //         } else {
+        //             println!("elevator already on floor {target}");
+        //         }
+        //     }
+        // }
 
         (!sched_events.is_empty()).then_some(sched_events)
     }
