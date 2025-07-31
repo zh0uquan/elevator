@@ -160,7 +160,7 @@ impl Transition<ElevatorContext> for ElevatorState<MovingUp> {
     async fn on_event(
         self: Box<Self>,
         action: Action,
-        ctx: &mut ElevatorContext,
+        _ctx: &mut ElevatorContext,
     ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Braking => {
@@ -188,7 +188,7 @@ impl Transition<ElevatorContext> for ElevatorState<MovingDown> {
     async fn on_event(
         self: Box<Self>,
         action: Action,
-        ctx: &mut ElevatorContext,
+        _ctx: &mut ElevatorContext,
     ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::Braking => {
@@ -243,7 +243,7 @@ impl Transition<ElevatorContext> for ElevatorState<DoorOpening> {
     async fn on_event(
         self: Box<Self>,
         action: Action,
-        ctx: &mut ElevatorContext,
+        _ctx: &mut ElevatorContext,
     ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::DoorOpened => {
@@ -274,7 +274,7 @@ impl Transition<ElevatorContext> for ElevatorState<DoorOpened> {
     async fn on_event(
         self: Box<Self>,
         action: Action,
-        ctx: &mut ElevatorContext,
+        _ctx: &mut ElevatorContext,
     ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::ClosingDoor => {
@@ -301,7 +301,7 @@ impl Transition<ElevatorContext> for ElevatorState<DoorClosing> {
     async fn on_event(
         self: Box<Self>,
         action: Action,
-        ctx: &mut ElevatorContext,
+        _ctx: &mut ElevatorContext,
     ) -> anyhow::Result<BoxedTransition> {
         match action {
             Action::DoorClosed => {

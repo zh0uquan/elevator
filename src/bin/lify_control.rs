@@ -16,7 +16,9 @@ const CONTROL_ADDRESS: &str = "127.0.0.1:11000";
 const LIFTY_ADDRESS: &str = "127.0.0.1:10000";
 const MIN_FLOOR: u8 = 1;
 const MAX_FLOOR: u8 = 5;
+#[allow(dead_code)]
 const MIN_KEY: u8 = 0;
+#[allow(dead_code)]
 const MAX_KEY: u8 = 3;
 
 pub struct ElevatorApp {

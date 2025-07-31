@@ -81,7 +81,7 @@ impl Strategy<Event, ScheduleEvent, SharedStateMachine> for ScanStrategy {
                     println!("elevator approaching floor: {floor}")
                 }
             }
-            Event::KeySwitched(floor) => {}
+            Event::KeySwitched(_floor) => {}
         }
 
         println!("{:?} with state {:?}", elevator_context, state);
